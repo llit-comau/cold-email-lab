@@ -141,7 +141,7 @@ Phase 7: `pipeline` renders with sample data; `dashboard` produces valid HTML.
 ## Decisions
 
 - 2026-07-06 (Claude Fable): sqlite3 CLI is not installed on this machine — use `uv run python -c` for DB checks.
-- 2026-07-06 (Claude Fable): repo is not a git repo; do not git init without Mash's say-so.
+- 2026-07-06 (Claude Fable): repo is not a git repo; do not git init without Mash's say-so. → SUPERSEDED 2026-07-08: repo now lives at github.com/llit-comau/cold-email-lab (PUBLIC). Never commit .env, data/, or logs/ (gitignored); push only when Mash asks.
 - 2026-07-06 (Claude Fable): lead sourcing beyond CSV import (directory scraping, Places API) deliberately deferred — CSV covers v1; revisit after first real campaign.
 
 ## Open Questions
