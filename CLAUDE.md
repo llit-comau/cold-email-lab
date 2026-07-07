@@ -13,6 +13,7 @@ Internal tool for LeadFlow System (Melbourne). Feed it a target company URL, get
 - [x] Phase 8 — Lead sourcing (`leads source` + ICP profiles)
 - [x] Phase 9 — Pluggable LLM provider (`llm/client.py`: anthropic default, nvidia via NVIDIA_API_KEY)
 - [x] Phase 10 — Campaign engine extensions (reply storage, outcomes, caps, angle performance)
+- [x] Phase 11 — Local web dashboard (`web` command; FastAPI app with stdlib fallback when deps are unavailable)
 
 Always stop and wait for Mash's approval after completing a phase.
 
@@ -27,6 +28,7 @@ src/cold_email_lab/
   generate/         — angle + email generation (Phase 3)
   outbound/         — leads, sequences, sending, inbox, stats, sourcing (Phases 5-10)
   llm/              — pluggable LLM client (anthropic | nvidia) (Phase 9)
+  web/              — local dashboard routes/templates/static assets (Phase 11)
   storage/          — SQLite schema, read/write helpers
 prompts/            — all LLM prompts as .md files (no inline prompts in Python)
 profiles/           — ICP sourcing profiles (*.toml) for `leads source` (Phase 8)
@@ -51,6 +53,7 @@ After first install: `uv run playwright install chromium`
 | Logging | loguru |
 | Env vars | python-dotenv |
 | Storage | sqlite3 (stdlib) |
+| Web UI | FastAPI + Uvicorn + Jinja2 (Phase 11; fallback stdlib server exists for dependency-blocked sandboxes) |
 
 ## SQLite schema (db: `data/cold-email-lab.db`)
 
@@ -203,5 +206,18 @@ Each angle: initial email + follow-up at day 3 + follow-up at day 7.
 
 - Reply storage: new `replies` table stores matched replies, unsubscribes, and bounces with `from_addr`, optional `subject`, full `body_text`, `kind`, and `received_at`. `inbox.py` stores a reply row from `process_incoming_message` whenever an inbound message matches a sequence; unmatched messages remain ignored as before. CLI: `replies <lead_id>` / `replies --all`.
 - Lead outcomes: guarded `leads.outcome` and `leads.snooze_until` columns. CLI: `outcome <lead_id> <won|lost|followup>`, `snooze <lead_id> --until YYYY-MM-DD`, and `resurface <lead_id>` to clear both fields. Resurfacing is manual: `send tick` and `pipeline` report snoozed leads whose date has arrived, but they do not automatically clear the snooze.
-- Daily cap + warm-up: `send tick` enforces `SEND_DAILY_CAP` (default 10) and optional `SEND_WARMUP_SCHEDULE` (`5,10,20,40` style weekly caps). Dry-run shows which due steps would be deferred; live mode leaves deferred steps approved and opens SMTP only for steps inside the cap. Warm-up uses `kv.send_first_live_date`, set when the first warm-up live send is attempted.
+- Daily cap + warm-up: `send tick` enforces `SEND_DAILY_CAP` (default 10) and optional `SEND_WARMUP_SCHEDULE` (`5,10,20,40` style weekly caps). Dry-run shows which due steps would be deferred; live mode leaves deferred steps approved and opens SMTP only for steps inside the cap. Warm-up uses `kv.send_first_live_date`, set when the first warm-up live send succeeds.
 - Angle performance: `outbound/stats.py` exposes `get_angle_performance()` and `pipeline` shows per-angle contacted leads, replies, and reply rate.
+
+## Phase 11 — web dashboard
+
+- `web [--port 8321]` runs the local dashboard bound to `127.0.0.1` only. It never binds to
+  `0.0.0.0` because there is no auth layer.
+- Main implementation lives in `src/cold_email_lab/web/app.py` (FastAPI), with Jinja templates and
+  local CSS/JS under `web/templates/` and `web/static/`. Routes call existing `outbound/*` and
+  `storage/db.py` helpers; no sending/enrichment/sourcing logic is reimplemented in route code.
+- Background source/enrich jobs use one `kv` lock (`web_job_lock`) and JSON progress in
+  `web_job_progress`; the UI polls `/job/progress`.
+- If `fastapi`, `uvicorn`, and `jinja2` are unavailable, the CLI falls back to a small stdlib server
+  in `web/fallback.py` so local endpoint smoke tests can still run in restricted sandboxes. Install
+  the declared Phase 11 deps when network access is available for the full approved UI.

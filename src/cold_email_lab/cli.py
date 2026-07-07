@@ -854,5 +854,36 @@ def dashboard() -> None:
     typer.echo(f"Dashboard written to {out_path}")
 
 
+@app.command()
+def web(
+    port: int = typer.Option(8321, "--port", help="Local port to bind on 127.0.0.1"),
+) -> None:
+    """Run the local web dashboard on 127.0.0.1 only."""
+    import sys
+
+    from .storage.db import init_db
+
+    logger.remove()
+    logger.add(sys.stderr, level="WARNING", format="<level>{level}</level> {message}")
+    init_db()
+
+    try:
+        import uvicorn
+    except ImportError as exc:
+        from .web.fallback import run_fallback_server
+
+        typer.echo(
+            "Warning: FastAPI/Uvicorn/Jinja2 are not installed; running the stdlib fallback server. "
+            "Install the Phase 11 deps when network access is available.",
+            err=True,
+        )
+        run_fallback_server(port)
+        return
+
+    url = f"http://127.0.0.1:{port}"
+    typer.echo(f"Web dashboard running at {url}")
+    uvicorn.run("cold_email_lab.web.app:app", host="127.0.0.1", port=port, reload=False)
+
+
 if __name__ == "__main__":
     app()

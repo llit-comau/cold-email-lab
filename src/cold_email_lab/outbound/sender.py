@@ -188,10 +188,10 @@ def send_tick(live: bool = False) -> list[dict]:
                 f"{', '.join(missing)}. Set them in .env, or omit --live for a dry-run."
             )
 
+    should_anchor_warmup = live and cap["source"] == "warm-up" and cap["first_live_date"] is None
+    warmup_anchored = False
     smtp_conn = None
     if live and sendable_steps:
-        if cap["source"] == "warm-up" and cap["first_live_date"] is None:
-            set_kv(_FIRST_LIVE_SEND_KEY, cap["today"])
         host = os.environ["SMTP_HOST"]
         port = int(os.getenv("SMTP_PORT", "587"))
         user = os.environ["SMTP_USER"]
@@ -239,6 +239,9 @@ def send_tick(live: bool = False) -> list[dict]:
                 update_step_status(
                     step["id"], "sent", sent_at=_now_iso(), smtp_message_id=message_id
                 )
+                if should_anchor_warmup and not warmup_anchored:
+                    set_kv(_FIRST_LIVE_SEND_KEY, cap["today"])
+                    warmup_anchored = True
                 entry["status"] = "sent"
                 entry["smtp_message_id"] = message_id
                 logger.info(f"Sent step #{step['id']} to {step['contact_email']} ({message_id})")

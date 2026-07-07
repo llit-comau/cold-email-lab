@@ -536,7 +536,7 @@ async def source_leads(profile_name: str, limit: int | None = None, dry_run: boo
                 if candidate is None:
                     report.no_email_found += 1
                 else:
-                    if have_api_key:
+                    if have_llm:
                         score, rationale = await score_fit(candidate, profile.description)
                         candidate.fit_score = score
                         if rationale:

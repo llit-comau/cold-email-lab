@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="kpis">
+  <div class="kpi"><div class="lbl">Leads</div><div class="val">{{ stats.total_leads }}</div><div class="note">{{ sources|length }} source{{ '' if sources|length == 1 else 's' }}</div></div>
+  <div class="kpi attn"><div class="lbl">Awaiting approval</div><div class="val">{{ draft_count }}</div><div class="note">drafts only</div></div>
+  <div class="kpi"><div class="lbl">Active sequences</div><div class="val">{{ stats.active_sequences }}</div><div class="note">{{ stats.due_today }} steps due today</div></div>
+  <div class="kpi"><div class="lbl">Reply rate</div><div class="val">{{ stats.reply_rate|pct }}</div><div class="note">{{ stats.replied_leads }} of {{ stats.leads_with_sent_step }} contacted</div></div>
+  <div class="kpi"><div class="lbl">Unsubscribes</div><div class="val">{{ stats.unsubscribed_leads }}</div><div class="note">suppression list: {{ stats.suppression_count }}</div></div>
+</div>
+<div class="grid2">
+  <div class="card">
+    <h2>Activity — sent vs replies</h2>
+    <div class="legend"><span><i style="background:var(--sent)"></i>Sent</span><span><i style="background:var(--reply)"></i>Replies</span></div>
+    {% set maxv = [3] %}
+    {% for d in activity %}{% if d.sent > maxv[0] %}{% set _ = maxv.append(d.sent) %}{% endif %}{% if d.replies > maxv[0] %}{% set _ = maxv.append(d.replies) %}{% endif %}{% endfor %}
+    {% set top = maxv|max %}
+    <div class="chart" role="img" aria-label="Daily emails sent and replies received over the last 30 days">
+      {% for d in activity %}
+      <div class="day" data-tip="{{ d.date|date }}&#10;sent    {{ d.sent }}&#10;replies {{ d.replies }}">
+        <b class="s" style="height:{{ (d.sent / top * 100)|round(0) }}%"></b><b class="r" style="height:{{ (d.replies / top * 100)|round(0) }}%"></b>
+      </div>
+      {% endfor %}
+    </div>
+    <div class="xlabels"><span>{{ activity[0].date|date }}</span><span>{{ activity[14].date|date }}</span><span>{{ activity[-1].date|date }}</span></div>
+  </div>
+  <div class="card">
+    <h2>Lead funnel</h2>
+    {% set total = stats.total_leads if stats.total_leads else 1 %}
+    {% for label, val, hot in [
+      ('New', stats.funnel.new, false), ('Enriched', stats.funnel.enriched, false),
+      ('Sequenced', stats.funnel.sequenced, false), ('Replied', stats.funnel.replied, true),
+      ('Unsubscribed', stats.funnel.unsubscribed, false), ('Bounced', stats.funnel.bounced, false)] %}
+      <div class="funnel-row {{ 'hot' if hot else '' }}"><span>{{ label }}</span><div class="funnel-bar"><b style="width:{{ val / total * 100 }}%"></b></div><span class="n">{{ val }}</span></div>
+    {% endfor %}
+    <h2 style="margin-top:18px">Recent activity</h2>
+    <table><tbody>
+      {% for row in recent %}
+      <tr><td><span class="pill p-{{ row.kind }}">{{ row.kind }}</span></td><td>{{ row.company_name }}{% if row.subject %} · {{ row.subject }}{% endif %}</td><td class="mono">{{ row.at|dt }}</td></tr>
+      {% else %}<tr><td colspan="3" class="meta">No recent campaign activity.</td></tr>{% endfor %}
+    </tbody></table>
+  </div>
+</div>
+<div class="grid2">
+  <div class="card">
+    <h2>Angle performance</h2>
+    <table><thead><tr><th>Angle</th><th>Contacted</th><th>Replies</th><th>Rate</th></tr></thead><tbody>
+      {% for row in angles %}<tr><td>{{ row.angle_name }}</td><td class="mono">{{ row.leads_contacted }}</td><td class="mono">{{ row.replies }}</td><td class="mono">{{ row.reply_rate|pct }}</td></tr>
+      {% else %}<tr><td colspan="4" class="meta">No sent sequence data yet.</td></tr>{% endfor %}
+    </tbody></table>
+  </div>
+  <div class="card">
+    <h2>Source leads</h2>
+    <form method="post" action="/source" class="form-grid">
+      <div><label for="profile">Profile</label><select id="profile" name="profile">{% for p in profiles %}<option value="{{ p }}">{{ p }}</option>{% endfor %}</select></div>
+      <div><label for="limit">Limit</label><input id="limit" name="limit" type="number" min="1" max="25" value="2"></div>
+      <div><button class="btn btn-primary" type="submit">Source leads</button></div>
+    </form>
+  </div>
+</div>
+{% endblock %}

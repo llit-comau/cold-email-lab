@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block content %}
+{% if steps %}
+<div class="banner"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4m0 4h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg><span><b>{{ steps|length }} drafts</b> need approval before the next send tick. Nothing sends without it.</span></div>
+{% endif %}
+{% for step in steps %}
+<div class="card draft">
+  <div class="draft-head"><span class="who">{{ step.company_name }}</span><span class="pill p-draft">draft</span><span class="meta">{{ step.contact_email }} · step {{ step.step_number }} of 3 · {{ step.angle_name }} · due {{ step.due_at|dt }}</span></div>
+  <div class="subject"><span>Subject:</span> {{ step.subject }}</div>
+  <div class="body-box">{{ step.body }}</div>
+  <div class="draft-actions">
+    <form method="post" action="/steps/{{ step.id }}/approve"><button class="btn btn-primary" type="submit">Approve</button></form>
+    <form method="post" action="/sequences/{{ step.sequence_id }}/approve"><button class="btn" type="submit">Approve sequence</button></form>
+  </div>
+  <form method="post" action="/steps/{{ step.id }}/edit" class="form-grid" style="margin-top:12px">
+    <div><label>Subject</label><input name="subject" value="{{ step.subject }}"></div>
+    <div><label>Body</label><textarea name="body">{{ step.body }}</textarea></div>
+    <div><button class="btn" type="submit">Save draft</button></div>
+  </form>
+</div>
+{% else %}
+<div class="card"><h2>Review queue</h2><p class="meta">No draft steps pending approval.</p></div>
+{% endfor %}
+{% endblock %}

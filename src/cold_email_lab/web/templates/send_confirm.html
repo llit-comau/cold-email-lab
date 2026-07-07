@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="banner"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4m0 4h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg><span><b>{{ due_count }} recipient{{ '' if due_count == 1 else 's' }}</b> would be attempted live. Today's cap is {{ cap.sent_today }}/{{ cap.cap }} sent ({{ cap.source }}).</span></div>
+<div class="card">
+  <h2>Recipients inside the cap</h2>
+  <table><thead><tr><th>Step</th><th>Company</th><th>Email</th><th>Subject</th></tr></thead><tbody>
+  {% for r in recipients %}<tr><td class="mono">#{{ r.step_id }}</td><td>{{ r.company_name }}</td><td class="mono">{{ r.to }}</td><td>{{ r.subject }}</td></tr>{% else %}<tr><td colspan="4" class="meta">No sendable due steps inside today's cap.</td></tr>{% endfor %}
+  </tbody></table>
+  <div class="actions"><a class="btn" href="/">Cancel</a><form method="post" action="/send/live"><button class="btn btn-danger" type="submit">Send live now</button></form></div>
+</div>
+{% endblock %}

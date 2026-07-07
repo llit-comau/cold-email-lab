@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+{% for seq in sequences %}
+  <div class="seq">
+    <div><div class="who">{{ seq.company_name }} <span class="pill p-{{ seq.sequence_status }}">{{ seq.sequence_status }}</span></div><div class="angle">{{ seq.angle_name }} · <a href="/leads/{{ seq.lead_id }}">{{ seq.contact_email }}</a></div></div>
+    <div><div class="steps">
+      {% for step in seq.steps %}
+        <span class="step"><span class="dot {{ step.status }}" title="Step {{ step.step_number }} — {{ step.status }} · due {{ step.due_at|dt }}">{{ step.step_number }}</span></span>{% if not loop.last %}<span class="conn"></span>{% endif %}
+      {% endfor %}
+    </div><div class="steps-lbl">{% if seq.steps %}step {{ seq.steps[-1].step_number }} status: {{ seq.steps[-1].status }}{% endif %}</div></div>
+  </div>
+{% else %}
+  <p class="meta">No sequences yet.</p>
+{% endfor %}
+</div>
+{% endblock %}

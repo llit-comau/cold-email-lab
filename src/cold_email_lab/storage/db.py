@@ -458,6 +458,12 @@ def list_draft_steps(sequence_id: int | None = None) -> list[sqlite3.Row]:
         ).fetchall()
 
 
+def count_draft_steps() -> int:
+    with _connect() as conn:
+        row = conn.execute("SELECT COUNT(*) AS c FROM sequence_steps WHERE status = 'draft'").fetchone()
+        return row["c"]
+
+
 def list_due_steps(now_iso: str) -> list[sqlite3.Row]:
     """Approved steps that are due, belonging to still-active sequences."""
     with _connect() as conn:
@@ -674,6 +680,73 @@ def get_all_sequences_overview(limit: int = 100) -> list[sqlite3.Row]:
                FROM sequences sq JOIN leads l ON sq.lead_id = l.id
                ORDER BY sq.created_at DESC LIMIT ?""",
             (limit,),
+        ).fetchall()
+
+
+def get_recent_activity(limit: int = 10) -> list[sqlite3.Row]:
+    with _connect() as conn:
+        return conn.execute(
+            """SELECT 'sent' AS kind, ss.sent_at AS at, l.id AS lead_id, l.company_name,
+                      ss.subject AS subject, sq.id AS sequence_id
+               FROM sequence_steps ss
+               JOIN sequences sq ON ss.sequence_id = sq.id
+               JOIN leads l ON sq.lead_id = l.id
+               WHERE ss.status = 'sent' AND ss.sent_at IS NOT NULL
+               UNION ALL
+               SELECT e.event_type AS kind, e.created_at AS at, l.id AS lead_id, l.company_name,
+                      NULL AS subject, e.sequence_id
+               FROM events e
+               JOIN leads l ON e.lead_id = l.id
+               ORDER BY at DESC
+               LIMIT ?""",
+            (limit,),
+        ).fetchall()
+
+
+def list_lead_sources() -> list[sqlite3.Row]:
+    with _connect() as conn:
+        return conn.execute(
+            """SELECT COALESCE(source, 'unknown') AS source, COUNT(*) AS c
+               FROM leads GROUP BY COALESCE(source, 'unknown') ORDER BY c DESC, source"""
+        ).fetchall()
+
+
+def get_lead_sequences(lead_id: int) -> list[sqlite3.Row]:
+    with _connect() as conn:
+        return conn.execute(
+            """SELECT * FROM sequences WHERE lead_id = ? ORDER BY created_at DESC, id DESC""",
+            (lead_id,),
+        ).fetchall()
+
+
+def lead_has_active_sequence(lead_id: int) -> bool:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM sequences WHERE lead_id = ? AND status = 'active' LIMIT 1",
+            (lead_id,),
+        ).fetchone()
+        return row is not None
+
+
+def get_lead_research_brief(lead_id: int) -> sqlite3.Row | None:
+    with _connect() as conn:
+        return conn.execute(
+            """SELECT rb.* FROM leads l
+               JOIN research_briefs rb ON rb.run_id = l.run_id
+               WHERE l.id = ?
+               ORDER BY rb.id DESC LIMIT 1""",
+            (lead_id,),
+        ).fetchone()
+
+
+def get_lead_outreach_sets(lead_id: int) -> list[sqlite3.Row]:
+    with _connect() as conn:
+        return conn.execute(
+            """SELECT os.* FROM leads l
+               JOIN outreach_sets os ON os.run_id = l.run_id
+               WHERE l.id = ?
+               ORDER BY os.id""",
+            (lead_id,),
         ).fetchall()
 
 

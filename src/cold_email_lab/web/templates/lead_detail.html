@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="actions">
+  <span class="pill p-{{ lead.status }}">{{ lead.status }}</span>
+  {% if lead.outcome %}<span class="pill p-{{ lead.outcome }}">{{ lead.outcome }}{% if lead.snooze_until %} until {{ lead.snooze_until }}{% endif %}</span>{% endif %}
+  <form method="post" action="/leads/{{ lead.id }}/enrich"><button class="btn" type="submit">Enrich lead</button></form>
+</div>
+<div class="grid2">
+  <div class="card"><h2>Research brief</h2>{% if brief %}<p>{{ brief.description }}</p><p class="meta">{{ brief.confidence_notes or '' }}</p>{% else %}<p class="meta">No research brief stored for this lead yet.</p>{% endif %}</div>
+  <div class="card"><h2>Lead details</h2><table><tbody><tr><td>Contact</td><td class="mono">{{ lead.contact_name or '' }} {{ lead.contact_email }}</td></tr><tr><td>URL</td><td>{{ lead.url }}</td></tr><tr><td>Notes</td><td>{{ lead.notes or '' }}</td></tr></tbody></table></div>
+</div>
+<div class="grid3">
+{% for item in angles %}
+  <div class="card"><h2>Angle {{ item.number }} — {{ item.angle.angle_name }}</h2><p class="meta">{{ item.angle.angle_rationale }}</p><div class="subject"><span>Subject:</span> {{ item.angle.initial_email.subject }}</div><div class="body-box">{{ item.angle.initial_email.body }}</div>{% if not has_active_sequence %}<form method="post" action="/leads/{{ lead.id }}/sequence"><input type="hidden" name="angle" value="{{ item.number }}"><button class="btn btn-primary" type="submit">Create sequence with this angle</button></form>{% endif %}</div>
+{% else %}<div class="card"><h2>Angles</h2><p class="meta">No drafted angles yet. Enrich this lead first.</p></div>{% endfor %}
+</div>
+<div class="grid2">
+  <div class="card"><h2>Sequence history</h2>{% for seq in sequences %}<div class="seq"><div><div class="who">Sequence #{{ seq.row.id }} <span class="pill p-{{ seq.row.status }}">{{ seq.row.status }}</span></div><div class="angle">{{ seq.row.angle_name }} · created {{ seq.row.created_at|date }}</div></div><div class="steps">{% for step in seq.steps %}<span class="step"><span class="dot {{ step.status }}" title="Step {{ step.step_number }} — {{ step.status }}">{{ step.step_number }}</span></span>{% if not loop.last %}<span class="conn"></span>{% endif %}{% endfor %}</div></div>{% else %}<p class="meta">No sequence history.</p>{% endfor %}</div>
+  <div class="card"><h2>Replies and outcome</h2>{% for reply in replies %}<div class="body-box">{{ reply.kind }} · {{ reply.received_at|dt }}{% if reply.subject %} · {{ reply.subject }}{% endif %}<br>{{ reply.body_text }}</div>{% else %}<p class="meta">No replies stored.</p>{% endfor %}
+    <div class="actions">{% for val in ['won','lost','followup'] %}<form method="post" action="/leads/{{ lead.id }}/outcome"><input type="hidden" name="value" value="{{ val }}"><button class="btn" type="submit">{{ val }}</button></form>{% endfor %}</div>
+    <form method="post" action="/leads/{{ lead.id }}/snooze" class="form-grid"><div><label>Snooze until</label><input type="date" name="until"></div><div><button class="btn" type="submit">Snooze</button></div></form>
+    <form method="post" action="/leads/{{ lead.id }}/resurface"><button class="btn" type="submit">Resurface</button></form>
+  </div>
+</div>
+{% endblock %}

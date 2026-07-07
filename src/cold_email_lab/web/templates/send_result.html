@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+  <h2>Send tick output</h2>
+  <pre class="pre">{{ send_result or 'No send tick output stored yet.' }}</pre>
+  <div class="actions"><a class="btn" href="/">Back to overview</a><a class="btn btn-danger" href="/send/live/confirm">Prepare live send</a></div>
+</div>
+{% endblock %}

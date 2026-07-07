@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="chips">
+  <a class="chip {{ 'on' if not selected_status and not selected_source else '' }}" href="/leads">All</a>
+  {% for s in sources %}<a class="chip {{ 'on' if selected_source == s.source else '' }}" href="/leads?source={{ s.source }}">{{ s.source }} · {{ s.c }}</a>{% endfor %}
+  {% for st in ['new','enriched','sequenced','replied','unsubscribed','bounced'] %}<a class="chip {{ 'on' if selected_status == st else '' }}" href="/leads?status={{ st }}">{{ st }}</a>{% endfor %}
+</div>
+<div class="card table-wrap">
+  <table><thead><tr><th>Company</th><th>Contact</th><th>Status</th><th>Outcome</th><th>Fit</th><th>Source</th><th>Added</th><th></th></tr></thead><tbody>
+  {% for lead in leads %}
+    <tr><td><b>{{ lead.company_name }}</b></td><td class="mono">{{ lead.contact_email }}</td><td><span class="pill p-{{ lead.status }}">{{ lead.status }}</span></td><td>{% if lead.outcome %}<span class="pill p-{{ lead.outcome }}">{{ lead.outcome }}</span>{% endif %}</td><td class="mono">{{ lead.fit_score if lead.fit_score is not none else '—' }}</td><td class="mono">{{ lead.source or '' }}</td><td class="mono">{{ lead.created_at|date }}</td><td><a class="btn" href="/leads/{{ lead.id }}">Open</a></td></tr>
+  {% else %}<tr><td colspan="8" class="meta">No leads found.</td></tr>{% endfor %}
+  </tbody></table>
+</div>
+{% endblock %}
