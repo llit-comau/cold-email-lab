@@ -1,0 +1,9 @@
+name = "leadflow"
+description = "Australian small service businesses that need lead generation / marketing systems"
+queries = [
+    "plumbing company Melbourne",
+    "electrician business Sydney",
+    "landscaping company Brisbane",
+]
+exclude_domains = ["yellowpages.com.au", "linkedin.com"]
+max_leads = 25

@@ -1,0 +1,9 @@
+name = "job-tracker"
+description = "Small-to-mid accounting firms in Australia that manage client jobs/workflow manually"
+queries = [
+    "accounting firm Melbourne",
+    "small accounting practice Sydney",
+    "bookkeeping firm Brisbane",
+]
+exclude_domains = ["yellowpages.com.au", "linkedin.com"]
+max_leads = 25
