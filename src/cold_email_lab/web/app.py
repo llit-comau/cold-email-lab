@@ -13,6 +13,7 @@ from fastapi.templating import Jinja2Templates
 
 load_dotenv()
 
+from ..outbound.breaker import get_breaker_status
 from ..outbound.leads import enrich_lead
 from ..outbound.sender import (
     approve_sequence,
@@ -225,8 +226,20 @@ def overview(request: Request) -> HTMLResponse:
             "angles": get_angle_performance(),
             "sources": list_lead_sources(),
             "profiles": _profile_names(),
+            "breaker": get_breaker_status(),
         },
     )
+
+
+def _steps_with_qa_flags(steps: list) -> list[dict]:
+    """Attach a parsed qa_flags_list to each step row for the review templates."""
+    out = []
+    for step in steps:
+        d = dict(step)
+        raw = d.get("qa_flags")
+        d["qa_flags_list"] = json.loads(raw) if raw else []
+        out.append(d)
+    return out
 
 
 @app.get("/review", response_class=HTMLResponse)
@@ -236,7 +249,7 @@ def review(request: Request) -> HTMLResponse:
         "review.html",
         {
             **_base_context(request, "review", "Review queue", "Approve or edit before anything sends"),
-            "steps": review_steps(),
+            "steps": _steps_with_qa_flags(review_steps()),
         },
     )
 

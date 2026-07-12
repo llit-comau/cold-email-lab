@@ -36,6 +36,7 @@ class OutreachSet(BaseModel):
     angle_name: str
     angle_json: str
     created_at: datetime
+    qa_flags: str | None = None  # Phase 12: JSON list of QA lint flags, NULL = clean
 
 
 # Phase 2: confirm this schema with Mash before wiring up
@@ -112,6 +113,7 @@ class SequenceStep(BaseModel):
     status: str = "draft"
     sent_at: datetime | None = None
     smtp_message_id: str | None = None
+    qa_flags: str | None = None  # Phase 12: JSON list of QA lint flags, NULL = clean
 
 
 # Phase 6

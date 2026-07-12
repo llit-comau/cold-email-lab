@@ -7,3 +7,21 @@ queries = [
 ]
 exclude_domains = ["yellowpages.com.au", "linkedin.com"]
 max_leads = 25
+
+# Phase 12: what WE sell — every generated email must anchor on this, never on
+# a service inferred from the target's own website/business.
+pitch = "LeadFlow System's marketing and lead-generation systems for small Australian service businesses — websites, lead capture, and outbound campaigns built to keep the pipeline full without hiring an agency. Built by LeadFlow System, Melbourne."
+
+# TRUE, citable facts only. Empty on purpose — we have no case studies yet.
+# When this is empty, the peer-credibility angle may not claim we served anyone.
+proof_points = []
+
+# Used by outbound/qa.py to check the generated emails actually mention our offer.
+offer_keywords = [
+    "LeadFlow System",
+    "lead generation",
+    "marketing system",
+    "pipeline",
+    "outbound campaign",
+    "lead capture",
+]

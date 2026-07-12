@@ -1,4 +1,5 @@
 import asyncio
+import json
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -19,10 +20,16 @@ leads_app = typer.Typer(name="leads", help="Manage leads.", no_args_is_help=True
 sequence_app = typer.Typer(name="sequence", help="Manage outreach sequences.", no_args_is_help=True)
 send_app = typer.Typer(name="send", help="Send approved outreach steps.", no_args_is_help=True)
 inbox_app = typer.Typer(name="inbox", help="Check for replies, unsubscribes and bounces.", no_args_is_help=True)
+campaign_app = typer.Typer(
+    name="campaign",
+    help="Autopilot — one orchestrator tick: resurface, replenish, enrich, sequence, send, inbox, digest.",
+    no_args_is_help=True,
+)
 app.add_typer(leads_app)
 app.add_typer(sequence_app)
 app.add_typer(send_app)
 app.add_typer(inbox_app)
+app.add_typer(campaign_app)
 
 
 def _setup_logging(timestamp: str) -> None:
@@ -164,16 +171,22 @@ async def _brief(run_id: int, json_out: bool) -> None:
 @app.command()
 def generate(
     run_id: int = typer.Argument(..., help="Run ID to generate emails for"),
+    profile: str = typer.Option(
+        ...,
+        "--profile",
+        help="ICP profile (profiles/<name>.toml) to pull the offer pitch/proof_points from",
+    ),
     json_out: bool = typer.Option(False, "--json", help="Print raw angles JSON"),
 ) -> None:
     """Generate three outreach angles and emails from a research brief."""
-    asyncio.run(_generate(run_id, json_out))
+    asyncio.run(_generate(run_id, profile, json_out))
 
 
-async def _generate(run_id: int, json_out: bool) -> None:
+async def _generate(run_id: int, profile: str, json_out: bool) -> None:
     import json as _json
 
     from .generate.generator import generate_outreach
+    from .outbound.sourcing import load_profile
     from .storage.db import init_db
 
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -183,7 +196,13 @@ async def _generate(run_id: int, json_out: bool) -> None:
     typer.echo(f"Generating outreach for run #{run_id} …")
 
     try:
-        angles = await generate_outreach(run_id)
+        loaded_profile = load_profile(profile)
+        angles = await generate_outreach(
+            run_id,
+            pitch=loaded_profile.pitch,
+            proof_points=loaded_profile.proof_points,
+            offer_keywords=loaded_profile.offer_keywords,
+        )
     except ValueError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1)
@@ -391,6 +410,14 @@ def enrich(
     lead_id: int = typer.Argument(None, help="Lead ID to enrich"),
     all_new: bool = typer.Option(False, "--all-new", help="Enrich all leads with status 'new'"),
     limit: int = typer.Option(None, "--limit", help="Max number of leads to enrich with --all-new"),
+    profile: str = typer.Option(
+        None,
+        "--profile",
+        help=(
+            "ICP profile (profiles/<name>.toml) to pull pitch/proof_points from. "
+            "Only required when the lead's source doesn't match a profile file."
+        ),
+    ),
 ) -> None:
     """Run the research → brief → generate pipeline for a lead (or all new leads)."""
     if lead_id is None and not all_new:
@@ -400,10 +427,10 @@ def enrich(
         typer.echo("Provide either a lead_id or --all-new, not both.", err=True)
         raise typer.Exit(1)
 
-    asyncio.run(_enrich(lead_id, all_new, limit))
+    asyncio.run(_enrich(lead_id, all_new, limit, profile))
 
 
-async def _enrich(lead_id: int | None, all_new: bool, limit: int | None) -> None:
+async def _enrich(lead_id: int | None, all_new: bool, limit: int | None, profile: str | None = None) -> None:
     from .outbound.leads import enrich_all_new, enrich_lead
     from .storage.db import init_db
 
@@ -414,7 +441,7 @@ async def _enrich(lead_id: int | None, all_new: bool, limit: int | None) -> None
     if all_new:
         typer.echo("Enriching all new leads …")
         try:
-            results = await enrich_all_new(limit=limit)
+            results = await enrich_all_new(limit=limit, profile=profile)
         except ValueError as exc:
             typer.echo(f"Error: {exc}", err=True)
             raise typer.Exit(1)
@@ -435,7 +462,7 @@ async def _enrich(lead_id: int | None, all_new: bool, limit: int | None) -> None
 
     typer.echo(f"Enriching lead #{lead_id} …")
     try:
-        run_id = await enrich_lead(lead_id)
+        run_id = await enrich_lead(lead_id, profile=profile)
     except ValueError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1)
@@ -493,6 +520,7 @@ def review(
         typer.echo("No draft steps pending review.")
         return
 
+    flagged = 0
     for step in steps:
         typer.echo(f"\n{'─' * 60}")
         typer.echo(
@@ -503,8 +531,16 @@ def review(
         typer.echo(f"Subject: {step['subject']}")
         typer.echo()
         typer.echo(step["body"])
+
+        qa_flags_raw = step["qa_flags"] if "qa_flags" in step.keys() else None
+        if qa_flags_raw:
+            flagged += 1
+            qa_flags = json.loads(qa_flags_raw)
+            typer.echo("\nQA WARNING — this draft failed the content lint (informational, does not block approval):")
+            for flag in qa_flags:
+                typer.echo(f"  - {flag}")
     typer.echo(f"\n{'─' * 60}")
-    typer.echo(f"{len(steps)} draft step(s) pending review.")
+    typer.echo(f"{len(steps)} draft step(s) pending review." + (f" {flagged} flagged by QA." if flagged else ""))
 
 
 @app.command()
@@ -666,6 +702,104 @@ def inbox_check_cmd() -> None:
     )
 
 
+@campaign_app.command(name="tick")
+def campaign_tick_cmd(
+    live: bool = typer.Option(
+        False, "--live", help="Actually send via SMTP and let stage (e) send live (default: dry-run send)"
+    ),
+) -> None:
+    """Run one full autopilot tick: resurface -> replenish -> enrich -> sequence -> send -> inbox -> digest."""
+    asyncio.run(_campaign_tick(live))
+
+
+async def _campaign_tick(live: bool) -> None:
+    from .outbound.campaign import run_campaign_tick
+    from .storage.db import init_db
+
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    _setup_logging(timestamp)
+    init_db()
+
+    typer.echo(f"Running campaign tick{' (LIVE)' if live else ' (dry-run send)'} …")
+    stages = await run_campaign_tick(live=live)
+
+    resurface = stages["resurface"]
+    replenish = stages["replenish"]
+    enrich = stages["enrich"]
+    sequence = stages["sequence"]
+    send = stages["send"]
+    inbox = stages["inbox"]
+    breaker = stages["breaker"]
+
+    typer.echo(f"\n{'─' * 60}")
+    typer.echo(f"Resurfaced:   {resurface['count']}")
+
+    if replenish.get("ran"):
+        typer.echo(
+            f"Replenish:    ran ({replenish['unsequenced_before']} unsequenced < floor {replenish['floor']})"
+        )
+        for p in replenish.get("profiles", []):
+            typer.echo(f"              {p['profile']}: +{p['inserted']} inserted (discovered {p['discovered']})")
+    else:
+        typer.echo(f"Replenish:    skipped — {replenish.get('notice', '')}")
+
+    typer.echo(
+        f"Enrich:       {enrich['ok']}/{enrich['attempted']} succeeded "
+        f"(cap {enrich['cap']}, {enrich['skipped_no_profile']} skipped — no profile)"
+    )
+    typer.echo(f"Sequences:    {len(sequence['created'])} created (draft steps only)")
+    for c in sequence.get("created", []):
+        typer.echo(f"              lead #{c['lead_id']} {c['company_name']} -> sequence #{c['sequence_id']} (angle {c['angle']})")
+
+    send_results = [r for r in send.get("results", []) if r.get("kind", "step") == "step"]
+    sent = sum(1 for r in send_results if r["status"] == "sent")
+    typer.echo(
+        f"Send tick:    {len(send_results)} due, {sent} sent"
+        + (f" — ERROR: {send['error']}" if send.get("error") else "")
+    )
+
+    if inbox.get("skipped"):
+        typer.echo(f"Inbox check:  skipped — {inbox['error']}")
+    elif inbox.get("error"):
+        typer.echo(f"Inbox check:  ERROR — {inbox['error']}")
+    else:
+        s = inbox["stats"]
+        typer.echo(
+            f"Inbox check:  {s['scanned']} scanned, {s['reply']} reply(ies), "
+            f"{s['unsubscribe']} unsubscribe(s), {s['bounce']} bounce(s)"
+        )
+
+    if breaker.get("tripped"):
+        typer.echo(f"\n*** CIRCUIT BREAKER TRIPPED: {breaker['reason']} ***", err=True)
+        typer.echo("*** Live sends are blocked until `campaign resume` is run. ***", err=True)
+
+    typer.echo(f"\nDigest written to {stages['digest_path']}")
+    if stages.get("digest_emailed"):
+        typer.echo("Digest emailed to DIGEST_EMAIL.")
+    elif stages.get("digest_email_error"):
+        typer.echo(f"Digest not emailed: {stages['digest_email_error']}")
+    typer.echo(f"{'─' * 60}")
+
+
+@campaign_app.command(name="resume")
+def campaign_resume_cmd() -> None:
+    """Clear a tripped circuit breaker after investigating the cause. Never happens automatically."""
+    import sys
+
+    from .outbound.breaker import resume_breaker
+    from .storage.db import init_db
+
+    logger.remove()
+    logger.add(sys.stderr, level="WARNING", format="<level>{level}</level> {message}")
+    init_db()
+
+    was_tripped = resume_breaker()
+    if was_tripped:
+        typer.echo("Circuit breaker cleared. Live sending resumed.")
+    else:
+        typer.echo("Circuit breaker was not tripped — nothing to clear.")
+
+
 @app.command()
 def replies(
     lead_id: int = typer.Argument(None, help="Lead ID to show replies for"),
@@ -783,6 +917,7 @@ def pipeline() -> None:
     """Print a terminal funnel/stats overview of the outbound pipeline."""
     import sys
 
+    from .outbound.breaker import get_breaker_status
     from .outbound.stats import get_angle_performance, get_pipeline_stats
     from .storage.db import init_db
 
@@ -795,6 +930,11 @@ def pipeline() -> None:
     typer.echo(f"\n{'═' * 50}")
     typer.echo("  PIPELINE OVERVIEW")
     typer.echo(f"{'═' * 50}\n")
+
+    breaker = get_breaker_status()
+    if breaker["tripped"]:
+        typer.echo(f"*** CIRCUIT BREAKER TRIPPED: {breaker['reason']} ***")
+        typer.echo("*** Live sends are blocked until `campaign resume` is run. ***\n")
 
     typer.echo("Leads by status:")
     for status, count in stats["funnel"].items():

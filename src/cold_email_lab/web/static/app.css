@@ -123,6 +123,10 @@ td.mono, .mono { font-family: var(--mono); font-size: 13px; font-variant-numeric
 .banner svg { width: 17px; height: 17px; color: var(--act); flex: 0 0 17px; }
 .banner b { color: var(--act); }
 .banner .btn { margin-left: auto; }
+.qa-warning { background: var(--bad-soft); border: 1px solid var(--bad); color: var(--ink); border-radius: 10px; padding: 10px 14px; font-size: 13px; margin-top: 10px; }
+.qa-warning strong { color: var(--bad); }
+.qa-warning ul { margin: 6px 0 0; padding-left: 18px; }
+.qa-warning li { margin-bottom: 2px; }
 input, textarea, select { border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 8px; padding: 8px 10px; font: inherit; width: 100%; }
 textarea { min-height: 130px; resize: vertical; }
 label { display: block; font-size: 12px; font-weight: 650; color: var(--ink-3); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 5px; }

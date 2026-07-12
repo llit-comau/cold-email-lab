@@ -117,6 +117,11 @@ class Profile:
     queries: list[str]
     exclude_domains: list[str] = field(default_factory=list)
     max_leads: int = 25
+    # Phase 12: offer anchoring for enrichment/generation — never inferred from
+    # the target's own website.
+    pitch: str = ""
+    proof_points: list[str] = field(default_factory=list)
+    offer_keywords: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -157,12 +162,43 @@ def load_profile(name: str) -> Profile:
     if not queries:
         raise ValueError(f"Profile {name!r} has no queries defined")
 
+    pitch = (data.get("pitch") or "").strip()
+    if not pitch:
+        raise ValueError(
+            f"Profile {name!r} has no `pitch` defined — required since Phase 12 "
+            f"(2-4 sentences: what we sell, who it's for). See profiles/README.md."
+        )
+
     return Profile(
         name=data.get("name", name),
         description=data.get("description", ""),
         queries=queries,
         exclude_domains=list(data.get("exclude_domains") or []),
         max_leads=int(data.get("max_leads", 25)),
+        pitch=pitch,
+        proof_points=list(data.get("proof_points") or []),
+        offer_keywords=list(data.get("offer_keywords") or []),
+    )
+
+
+def resolve_profile_for_lead(lead_source: str | None, profile_override: str | None = None) -> Profile:
+    """Resolve which ICP profile to use for enriching a lead.
+
+    Phase 12 rule: profiles/<lead.source>.toml when it exists; otherwise the
+    caller must pass an explicit override (CLI `--profile`), or we raise a
+    clear error naming the available profiles.
+    """
+    if profile_override:
+        return load_profile(profile_override)
+
+    available = sorted(p.stem for p in PROFILES_DIR.glob("*.toml"))
+    if lead_source and (PROFILES_DIR / f"{lead_source}.toml").exists():
+        return load_profile(lead_source)
+
+    raise ValueError(
+        f"No profile matches lead source {lead_source!r} (looked for "
+        f"profiles/{lead_source}.toml). Pass --profile <name> explicitly. "
+        f"Available profiles: {', '.join(available) if available else '(none found)'}"
     )
 
 

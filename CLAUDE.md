@@ -14,6 +14,8 @@ Internal tool for LeadFlow System (Melbourne). Feed it a target company URL, get
 - [x] Phase 9 — Pluggable LLM provider (`llm/client.py`: anthropic default, nvidia via NVIDIA_API_KEY)
 - [x] Phase 10 — Campaign engine extensions (reply storage, outcomes, caps, angle performance)
 - [x] Phase 11 — Local web dashboard (`web` command; FastAPI app with stdlib fallback when deps are unavailable)
+- [x] Phase 12 — Content correctness + draft QA (`profiles/*.toml` pitch/proof_points/offer_keywords, `outbound/qa.py` lint, `qa_flags` in review)
+- [x] Phase 13 — Autopilot (`campaign tick [--live]` orchestrator, daily digest, circuit breaker + `campaign resume`, `OPENAI_COMPAT_*` provider env rename)
 
 Always stop and wait for Mash's approval after completing a phase.
 
@@ -26,8 +28,8 @@ src/cold_email_lab/
   research/         — news + LinkedIn-via-Google signals (Phase 2)
   analyse/          — LLM synthesis → CompanyBrief (Phase 2)
   generate/         — angle + email generation (Phase 3)
-  outbound/         — leads, sequences, sending, inbox, stats, sourcing (Phases 5-10)
-  llm/              — pluggable LLM client (anthropic | nvidia) (Phase 9)
+  outbound/         — leads, sequences, sending, inbox, stats, sourcing, campaign orchestrator, breaker (Phases 5-13)
+  llm/              — pluggable LLM client (anthropic | openai-compat/nvidia) (Phases 9/13)
   web/              — local dashboard routes/templates/static assets (Phase 11)
   storage/          — SQLite schema, read/write helpers
 prompts/            — all LLM prompts as .md files (no inline prompts in Python)
@@ -109,8 +111,11 @@ Upgrade path if coverage is thin: **Brave Search API** (free tier, API key requi
   - `anthropic` (default) — anthropic SDK, tool-forced structured output, model `claude-sonnet-4-6`
     (fit scoring in `outbound/sourcing.py` keeps the cheaper `claude-haiku-4-5`). Unchanged
     behaviour from pre-Phase-9.
-  - `nvidia` — plain httpx POST to `{NVIDIA_BASE_URL or https://integrate.api.nvidia.com/v1}/chat/completions`
-    (OpenAI chat-completions format, bearer `NVIDIA_API_KEY`, model `NVIDIA_MODEL`). No SDK
+  - `openai-compat` (aliases: `nvidia`, kept working) — plain httpx POST to
+    `{base_url}/chat/completions` (OpenAI chat-completions format). Phase 13: config comes from
+    `OPENAI_COMPAT_BASE_URL` / `OPENAI_COMPAT_API_KEY` / `OPENAI_COMPAT_MODEL`, with the old
+    `NVIDIA_*` names read as a per-variable fallback (one-time deprecation log per process when a
+    fallback value is actually used; default base URL remains NVIDIA's endpoint). No SDK
     dependency added. Since there's no tool-forcing over plain httpx, the JSON schema is appended
     to the prompt as an explicit "respond with only this JSON shape" instruction instead.
 - Retry (3 attempts, exponential backoff) lives inside `llm/client.py` itself now (moved there from
@@ -153,11 +158,14 @@ Each angle: initial email + follow-up at day 3 + follow-up at day 7.
 
 | Var | Default | Notes |
 |---|---|---|
-| `LLM_PROVIDER` | `anthropic` | `anthropic` or `nvidia` — selects the backend in `llm/client.py`; read per-call, not cached |
+| `LLM_PROVIDER` | `anthropic` | `anthropic`, `openai-compat`, or `nvidia` (legacy alias for `openai-compat`) — selects the backend in `llm/client.py`; read per-call, not cached |
 | `ANTHROPIC_API_KEY` | — | Required when `LLM_PROVIDER=anthropic` (the default) |
-| `NVIDIA_API_KEY` | — | Required when `LLM_PROVIDER=nvidia` — your build.nvidia.com API key |
-| `NVIDIA_MODEL` | — | Required when `LLM_PROVIDER=nvidia` — exact model id, e.g. `z-ai/glm-5.2` (check https://build.nvidia.com) |
-| `NVIDIA_BASE_URL` | `https://integrate.api.nvidia.com/v1` | Optional override (e.g. to point at a local LiteLLM proxy); `/chat/completions` is appended |
+| `OPENAI_COMPAT_API_KEY` | — | Required when `LLM_PROVIDER=openai-compat`/`nvidia` — API key for any OpenAI-compatible endpoint (Phase 13; preferred over `NVIDIA_API_KEY`) |
+| `OPENAI_COMPAT_MODEL` | — | Required when `LLM_PROVIDER=openai-compat`/`nvidia` — exact model id (Phase 13; preferred over `NVIDIA_MODEL`) |
+| `OPENAI_COMPAT_BASE_URL` | `https://integrate.api.nvidia.com/v1` | Optional endpoint base (Phase 13; preferred over `NVIDIA_BASE_URL`); `/chat/completions` is appended |
+| `NVIDIA_API_KEY` | — | **Deprecated** fallback for `OPENAI_COMPAT_API_KEY` — still works, logs a one-time deprecation note per process |
+| `NVIDIA_MODEL` | — | **Deprecated** fallback for `OPENAI_COMPAT_MODEL` |
+| `NVIDIA_BASE_URL` | — | **Deprecated** fallback for `OPENAI_COMPAT_BASE_URL` |
 | `COLD_EMAIL_LAB_DB_PATH` | `data/cold-email-lab.db` | |
 | `COLD_EMAIL_LAB_MAX_PAGES` | `6` | homepage + up to 5 internal |
 | `COLD_EMAIL_LAB_SCRAPE_TIMEOUT_MS` | `30000` | |
@@ -175,6 +183,11 @@ Each angle: initial email + follow-up at day 3 + follow-up at day 7.
 | `IMAP_PASS` | — | Required for `inbox check` |
 | `SEND_DAILY_CAP` | `10` | Max live sends per UTC day; dry-run reports cap deferrals too |
 | `SEND_WARMUP_SCHEDULE` | — | Optional comma-separated weekly caps, e.g. `5,10,20,40`; overrides `SEND_DAILY_CAP` after first live send date is anchored in `kv` |
+| `PIPELINE_FLOOR` | `10` | Phase 13 — `campaign tick` runs sourcing when unsequenced leads (new/enriched, not suppressed, no outcome) drop below this |
+| `CAMPAIGN_PROFILES` | `job-tracker` | Phase 13 — comma-separated profile list `campaign tick` replenishes from |
+| `SOURCE_BATCH` | `5` | Phase 13 — per-profile lead limit for each replenish sourcing run |
+| `ENRICH_BATCH` | `5` | Phase 13 — max leads enriched per `campaign tick` |
+| `DIGEST_EMAIL` | — | Phase 13 — when set (and SMTP configured), the daily digest is emailed here; exempt from the send cap and suppression list |
 
 ## Phase 6 — sending & reply detection
 
@@ -221,3 +234,66 @@ Each angle: initial email + follow-up at day 3 + follow-up at day 7.
 - If `fastapi`, `uvicorn`, and `jinja2` are unavailable, the CLI falls back to a small stdlib server
   in `web/fallback.py` so local endpoint smoke tests can still run in restricted sandboxes. Install
   the declared Phase 11 deps when network access is available for the full approved UI.
+
+## Phase 12 — content correctness + draft QA
+
+- **Offer anchoring**: `profiles/*.toml` now require a `pitch` field (2–4 sentences: what we sell,
+  who it's for), plus optional `proof_points` (TRUE, citable facts only — empty means no social
+  proof may be claimed) and `offer_keywords` (checked by QA). `load_profile` raises a clear error
+  if `pitch` is missing. `prompts/email_generation.md` injects `{{pitch}}`/`{{proof_points}}` and
+  carries explicit anti-fabrication rules: every email sells *our* offer, never a service inferred
+  from the target's own website; the `peer_credibility` angle may only cite provided
+  `proof_points` verbatim — with none, it reframes around the prospect's peers' common situation
+  instead of claiming we served anyone.
+- **Profile resolution for enrichment**: a lead's profile is `profiles/<lead.source>.toml` when it
+  exists; otherwise `enrich <id> --profile <name>` is required, else a clear error lists the
+  available profiles. Resolution happens before any DB write, so a bad/missing profile never
+  leaves a lead half-enriched. The standalone Phase 3 `generate <run_id>` CLI command (no lead
+  attached) also requires `--profile` now, since `generate_outreach` always needs a `pitch`.
+- **Draft QA lint** — `outbound/qa.py`, pure functions, no LLM calls: per-email body/subject word
+  caps, banned-phrase list, and fabrication-pattern heuristics (exempted only when the flagged text
+  matches a supplied `proof_points` entry), plus an offer-relevance check across the whole 3-angle
+  set. `generate_outreach` runs the lint after generation; on any flags it retries once with the
+  flags appended to the prompt as feedback; whatever the retry produces is saved regardless of
+  whether it's still flagged — QA never blocks a save, it only records `qa_flags` (a JSON list) on
+  the `outreach_sets` row, and `outbound/sequences.py` copies the relevant subset down onto each
+  `sequence_steps` row it creates from that angle.
+- **Storage**: guarded, additive `qa_flags TEXT` column on both `outreach_sets` and
+  `sequence_steps` (`PRAGMA table_info` checked before `ALTER TABLE`, inside `init_db()`).
+- **Surfacing**: `review` (CLI) prints a "QA WARNING" block under any flagged draft; the web review
+  queue (`/review`) renders the same flags in a `.qa-warning` card. Approval is never blocked by a
+  QA flag — it's informational only.
+
+## Phase 13 — autopilot
+
+- **`campaign tick [--live]`** (`outbound/campaign.py`, thin typer sub-app in `cli.py`) runs the
+  whole machine as one tick, stages in order, each isolated (a stage failure is recorded in the
+  digest's Errors section and later stages still run): (a) resurface — snoozed leads whose date has
+  arrived are auto-cleared (unlike the still-manual `resurface <id>` flow, which remains for ad-hoc
+  use); (b) replenish — if unsequenced leads (status new/enriched, not suppressed, no outcome)
+  `< PIPELINE_FLOOR`, run sourcing for each profile in `CAMPAIGN_PROFILES` with `SOURCE_BATCH`;
+  (c) enrich `new` leads whose source resolves to a profile (cap `ENRICH_BATCH`; leads without a
+  resolvable profile are skipped and counted, per-lead failures — e.g. malformed GLM JSON — are
+  recorded and never crash the tick); (d) auto-create sequences for `enriched` leads without one,
+  rotating angles 1→2→3 across leads via the `kv` counter `campaign_angle_counter` for built-in
+  A/B data — **steps stay `draft`; automation never approves**; (e) `send tick` with the same
+  `--live` semantics, caps, and circuit breaker as the standalone command; (f) `inbox check`,
+  skipped cleanly when `IMAP_*` is unset; (g) digest.
+- **Digest** — always written to `data/digest-YYYY-MM-DD.md` (path printed), sections: circuit
+  breaker, awaiting approval, resurfaced, replenish, enrichment, sequences created, send tick,
+  inbox check, replies (with body snippets), errors, pipeline counts. Additionally emailed to
+  `DIGEST_EMAIL` when it and SMTP are both configured — the digest email goes to ourselves, so it
+  is exempt from the daily send cap and the suppression list (it uses its own direct SMTP
+  connection, not the send-tick machinery).
+- **Circuit breaker** (`outbound/breaker.py`, state in `kv`: `breaker_tripped`, `breaker_reason`,
+  `smtp_consecutive_failures`): evaluated after live sends — trips when bounce rate exceeds 5%
+  over the trailing 20 sent steps (only once ≥10 have been sent) or on 2 consecutive SMTP
+  connection failures (a successful connection resets the streak). Tripped → `send tick --live`
+  and campaign stage (e) refuse to send live (dry-run still works); shown loudly in `pipeline`,
+  the web overview banner, and the digest. Only a deliberate `campaign resume` clears it.
+- Suggested crontab for full autopilot (documented, **not installed** — add manually with
+  `crontab -e` if/when going live):
+  ```
+  0 8 * * *  cd /home/mash/cold-email-lab && ~/.local/bin/uv run cold-email-lab campaign tick --live >> logs/cron.log 2>&1
+  0 12 * * * cd /home/mash/cold-email-lab && ~/.local/bin/uv run cold-email-lab inbox check >> logs/cron.log 2>&1
+  ```

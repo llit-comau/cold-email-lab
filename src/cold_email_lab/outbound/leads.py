@@ -18,6 +18,7 @@ from ..storage.db import (
     update_lead_status,
     update_run_status,
 )
+from .sourcing import resolve_profile_for_lead
 
 
 def import_leads_csv(path: str | Path) -> tuple[int, int]:
@@ -83,18 +84,25 @@ def list_leads(status: str | None = None, source: str | None = None) -> list[sql
     return db_list_leads(status=status, source=source)
 
 
-async def enrich_lead(lead_id: int) -> int:
+async def enrich_lead(lead_id: int, profile: str | None = None) -> int:
     """Run the research → brief → generate pipeline for a lead's URL.
 
     Reuses scrape_company / synthesise_brief / generate_outreach — does not
     duplicate their logic. Links the resulting run_id to the lead and sets
     status to 'enriched'. Returns the run_id.
+
+    Phase 12: the offer pitch/proof_points come from an ICP profile — resolved
+    from profiles/<lead.source>.toml when it exists, else `profile` (CLI
+    `--profile`) must be given. Resolution happens before create_run, so a
+    missing profile never leaves a lead half-touched.
     """
     require_configured()  # fail before create_run — never touch the lead/run tables on a bad config
 
     lead = get_lead(lead_id)
     if lead is None:
         raise ValueError(f"Lead #{lead_id} not found")
+
+    resolved_profile = resolve_profile_for_lead(lead["source"], profile)
 
     logger.info(f"Enriching lead #{lead_id} ({lead['company_name']}, {lead['url']})")
 
@@ -112,7 +120,12 @@ async def enrich_lead(lead_id: int) -> int:
         update_run_status(run_id, "scraped")
 
         await synthesise_brief(run_id)
-        await generate_outreach(run_id)
+        await generate_outreach(
+            run_id,
+            pitch=resolved_profile.pitch,
+            proof_points=resolved_profile.proof_points,
+            offer_keywords=resolved_profile.offer_keywords,
+        )
 
         update_lead_run(lead_id, run_id)
         update_lead_status(lead_id, "enriched")
@@ -123,8 +136,14 @@ async def enrich_lead(lead_id: int) -> int:
         raise
 
 
-async def enrich_all_new(limit: int | None = None) -> list[tuple[int, int | None, Exception | None]]:
-    """Enrich all leads with status 'new'. Returns list of (lead_id, run_id_or_None, error_or_None)."""
+async def enrich_all_new(
+    limit: int | None = None, profile: str | None = None
+) -> list[tuple[int, int | None, Exception | None]]:
+    """Enrich all leads with status 'new'. Returns list of (lead_id, run_id_or_None, error_or_None).
+
+    `profile` (CLI `--profile`) is passed through to every lead as a fallback for leads whose
+    `source` doesn't resolve to a profiles/*.toml file on its own.
+    """
     leads = db_list_leads(status="new")
     if limit is not None:
         leads = leads[:limit]
@@ -133,7 +152,7 @@ async def enrich_all_new(limit: int | None = None) -> list[tuple[int, int | None
     for lead in leads:
         lead_id = lead["id"]
         try:
-            run_id = await enrich_lead(lead_id)
+            run_id = await enrich_lead(lead_id, profile=profile)
             results.append((lead_id, run_id, None))
         except Exception as exc:
             logger.exception(f"Enrichment failed for lead #{lead_id}: {exc}")

@@ -13,6 +13,15 @@ Fields:
 | `queries` | yes | List of search-engine query strings. Each is run against DuckDuckGo (falling back to Bing) to discover candidate company websites. Vary city/service to widen coverage. |
 | `exclude_domains` | no | Extra domains to blocklist for this profile (merged with the built-in blocklist of directories, socials, gov/news sites, etc). |
 | `max_leads` | no (default 25) | Cap on how many leads a single `leads source` run will insert, if `--limit` isn't passed on the command line. |
+| `pitch` | **yes (Phase 12)** | 2–4 sentences: what WE sell and who it's for. Injected into `prompts/email_generation.md` so every generated email anchors on our offer, never on a service inferred from the *target's* own website. |
+| `proof_points` | no (default empty) | List of TRUE, citable facts (e.g. real client outcomes) the LLM may cite as social proof. Leave empty if you have none yet — the peer-credibility angle then reframes around the prospect's peers' common situation instead of claiming we served anyone. |
+| `offer_keywords` | no (default empty) | List of words/phrases used by `outbound/qa.py`'s lint to confirm the generated emails actually mention our offer somewhere across the set. |
+
+`enrich <lead_id>` resolves a lead's profile automatically from `profiles/<lead.source>.toml`
+(e.g. a lead sourced via `leads source job-tracker` uses `job-tracker.toml`'s `pitch`/`proof_points`).
+If no matching profile file exists for the lead's `source` (e.g. `csv-import` or `manual` leads),
+pass `enrich <lead_id> --profile <name>` explicitly — a clear error lists the available profiles
+otherwise.
 
 ## Editing / adding a profile
 

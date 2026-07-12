@@ -147,11 +147,25 @@ def _ensure_phase10_lead_columns(conn: sqlite3.Connection) -> None:
         logger.info("Added snooze_until column to leads table")
 
 
+def _ensure_phase12_qa_columns(conn: sqlite3.Connection) -> None:
+    """Phase 12: additive, guarded ALTERs for draft QA lint flags (JSON list, NULL = clean)."""
+    outreach_cols = {row["name"] for row in conn.execute("PRAGMA table_info(outreach_sets)").fetchall()}
+    if "qa_flags" not in outreach_cols:
+        conn.execute("ALTER TABLE outreach_sets ADD COLUMN qa_flags TEXT")
+        logger.info("Added qa_flags column to outreach_sets table")
+
+    step_cols = {row["name"] for row in conn.execute("PRAGMA table_info(sequence_steps)").fetchall()}
+    if "qa_flags" not in step_cols:
+        conn.execute("ALTER TABLE sequence_steps ADD COLUMN qa_flags TEXT")
+        logger.info("Added qa_flags column to sequence_steps table")
+
+
 def init_db() -> None:
     with _connect() as conn:
         conn.executescript(_SCHEMA)
         _ensure_fit_score_column(conn)
         _ensure_phase10_lead_columns(conn)
+        _ensure_phase12_qa_columns(conn)
     logger.debug(f"Database ready at {DB_PATH}")
 
 
@@ -217,11 +231,12 @@ def save_research_brief(run_id: int, brief_json: str) -> int:
         return cur.lastrowid
 
 
-def save_outreach_set(run_id: int, angle_name: str, angle_json: str) -> int:
+def save_outreach_set(run_id: int, angle_name: str, angle_json: str, qa_flags: str | None = None) -> int:
     with _connect() as conn:
         cur = conn.execute(
-            "INSERT INTO outreach_sets (run_id, angle_name, angle_json, created_at) VALUES (?, ?, ?, ?)",
-            (run_id, angle_name, angle_json, _now()),
+            """INSERT INTO outreach_sets (run_id, angle_name, angle_json, created_at, qa_flags)
+               VALUES (?, ?, ?, ?, ?)""",
+            (run_id, angle_name, angle_json, _now(), qa_flags),
         )
         return cur.lastrowid
 
@@ -401,12 +416,13 @@ def create_sequence_step(
     due_at: str,
     subject: str,
     body: str,
+    qa_flags: str | None = None,
 ) -> int:
     with _connect() as conn:
         cur = conn.execute(
-            """INSERT INTO sequence_steps (sequence_id, step_number, due_at, subject, body, status)
-               VALUES (?, ?, ?, ?, ?, 'draft')""",
-            (sequence_id, step_number, due_at, subject, body),
+            """INSERT INTO sequence_steps (sequence_id, step_number, due_at, subject, body, status, qa_flags)
+               VALUES (?, ?, ?, ?, ?, 'draft', ?)""",
+            (sequence_id, step_number, due_at, subject, body, qa_flags),
         )
         return cur.lastrowid
 
@@ -799,6 +815,46 @@ def count_steps_sent_between(start_iso: str, end_iso: str) -> int:
             (start_iso, end_iso),
         ).fetchone()
         return row["c"]
+
+
+def count_unsequenced_leads() -> int:
+    """Leads that are candidates for auto-sequencing/replenishing: status new/enriched,
+    not on the suppression list, and not carrying a manual outcome (won/lost/snoozed)."""
+    with _connect() as conn:
+        row = conn.execute(
+            """SELECT COUNT(*) AS c FROM leads l
+               WHERE l.status IN ('new', 'enriched')
+                 AND l.outcome IS NULL
+                 AND NOT EXISTS (SELECT 1 FROM suppression s WHERE s.email = l.contact_email)"""
+        ).fetchone()
+        return row["c"]
+
+
+def get_recent_sent_steps(limit: int = 20) -> list[sqlite3.Row]:
+    """Most recently sent steps (by sent_at desc), joined with the current lead status —
+    used by the Phase 13 circuit breaker to compute a trailing bounce rate."""
+    with _connect() as conn:
+        return conn.execute(
+            """SELECT ss.id AS step_id, ss.sent_at, sq.lead_id AS lead_id, l.status AS lead_status
+               FROM sequence_steps ss
+               JOIN sequences sq ON ss.sequence_id = sq.id
+               JOIN leads l ON sq.lead_id = l.id
+               WHERE ss.status = 'sent'
+               ORDER BY ss.sent_at DESC
+               LIMIT ?""",
+            (limit,),
+        ).fetchall()
+
+
+def list_replies_since(since_iso: str, limit: int = 50) -> list[sqlite3.Row]:
+    with _connect() as conn:
+        return conn.execute(
+            """SELECT r.*, l.company_name, l.contact_email
+               FROM replies r JOIN leads l ON r.lead_id = l.id
+               WHERE r.received_at >= ?
+               ORDER BY r.received_at DESC LIMIT ?""",
+            (since_iso, limit),
+        ).fetchall()
 
 
 def get_angle_performance_rows() -> list[sqlite3.Row]:

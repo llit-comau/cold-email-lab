@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timedelta, timezone
 
 from loguru import logger
@@ -10,8 +11,10 @@ from ..storage.db import (
 )
 from ..storage.db import update_lead_status
 from ..storage.models import OutreachAngle
+from .qa import flags_for_step
 
 _STEP_OFFSETS_DAYS = {1: 0, 2: 3, 3: 7}
+_STEP_KEYS = {1: "initial_email", 2: "followup_day3", 3: "followup_day7"}
 
 
 def create_sequence_for_lead(lead_id: int, angle: int) -> int:
@@ -40,6 +43,7 @@ def create_sequence_for_lead(lead_id: int, angle: int) -> int:
 
     angle_row = outreach_sets[angle - 1]
     outreach_angle = OutreachAngle.model_validate_json(angle_row["angle_json"])
+    angle_qa_flags = json.loads(angle_row["qa_flags"]) if angle_row["qa_flags"] else []
 
     sequence_id = create_sequence(lead_id, lead["run_id"], outreach_angle.angle_name)
 
@@ -51,12 +55,14 @@ def create_sequence_for_lead(lead_id: int, angle: int) -> int:
     ]
     for step_number, email in step_emails:
         due_at = now + timedelta(days=_STEP_OFFSETS_DAYS[step_number])
+        step_flags = flags_for_step(angle_qa_flags, _STEP_KEYS[step_number])
         create_sequence_step(
             sequence_id=sequence_id,
             step_number=step_number,
             due_at=due_at.isoformat(),
             subject=email.subject,
             body=email.body,
+            qa_flags=json.dumps(step_flags) if step_flags else None,
         )
 
     update_lead_status(lead_id, "sequenced")

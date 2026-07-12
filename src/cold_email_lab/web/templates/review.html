@@ -8,6 +8,14 @@
   <div class="draft-head"><span class="who">{{ step.company_name }}</span><span class="pill p-draft">draft</span><span class="meta">{{ step.contact_email }} · step {{ step.step_number }} of 3 · {{ step.angle_name }} · due {{ step.due_at|dt }}</span></div>
   <div class="subject"><span>Subject:</span> {{ step.subject }}</div>
   <div class="body-box">{{ step.body }}</div>
+  {% if step.qa_flags_list %}
+  <div class="qa-warning">
+    <strong>QA warning</strong> — this draft failed the content lint (informational, does not block approval):
+    <ul>
+      {% for flag in step.qa_flags_list %}<li>{{ flag }}</li>{% endfor %}
+    </ul>
+  </div>
+  {% endif %}
   <div class="draft-actions">
     <form method="post" action="/steps/{{ step.id }}/approve"><button class="btn btn-primary" type="submit">Approve</button></form>
     <form method="post" action="/sequences/{{ step.sequence_id }}/approve"><button class="btn" type="submit">Approve sequence</button></form>

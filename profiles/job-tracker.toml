@@ -7,3 +7,22 @@ queries = [
 ]
 exclude_domains = ["yellowpages.com.au", "linkedin.com"]
 max_leads = 25
+
+# Phase 12: what WE sell — every generated email must anchor on this, never on
+# a service inferred from the target's own website/business.
+pitch = "LeadFlow's Job Status Tracker: a deliberately simple 4-screen web app for small Australian accounting firms to track client jobs/workflow status across the team — replaces the status spreadsheet. Built by LeadFlow System, Melbourne."
+
+# TRUE, citable facts only. Empty on purpose — we have no case studies yet.
+# When this is empty, the peer-credibility angle may not claim we served anyone.
+proof_points = []
+
+# Used by outbound/qa.py to check the generated emails actually mention our offer.
+offer_keywords = [
+    "Job Status Tracker",
+    "job tracker",
+    "job status",
+    "workflow",
+    "client jobs",
+    "status spreadsheet",
+    "LeadFlow System",
+]

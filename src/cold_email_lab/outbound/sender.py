@@ -6,6 +6,7 @@ from email.utils import make_msgid
 
 from loguru import logger
 
+from .breaker import evaluate_bounce_rate, get_breaker_status, record_smtp_result
 from ..storage.db import (
     approve_sequence_steps,
     approve_step as db_approve_step,
@@ -176,6 +177,14 @@ def send_tick(live: bool = False) -> list[dict]:
     if not due_steps:
         return results
 
+    if live:
+        breaker = get_breaker_status()
+        if breaker["tripped"]:
+            raise ValueError(
+                f"Cannot send live — circuit breaker is tripped: {breaker['reason']}. "
+                "Run `campaign resume` after investigating, or omit --live for a dry-run."
+            )
+
     remaining = cap["remaining"]
     sendable_steps = due_steps[:remaining]
     deferred_steps = due_steps[remaining:]
@@ -200,8 +209,10 @@ def send_tick(live: bool = False) -> list[dict]:
             smtp_conn = smtplib.SMTP(host, port, timeout=30)
             smtp_conn.starttls()
             smtp_conn.login(user, password)
+            record_smtp_result(True)
         except Exception as exc:
             logger.exception(f"Failed to connect/authenticate to SMTP server: {exc}")
+            record_smtp_result(False)
             raise ValueError(f"Could not connect to SMTP server: {exc}") from exc
 
     try:
@@ -273,5 +284,11 @@ def send_tick(live: bool = False) -> list[dict]:
                 smtp_conn.quit()
             except Exception:
                 pass
+
+    if live:
+        # Trip conditions are evaluated after every live send tick, per Phase 13 —
+        # this is cheap (one query over the trailing window) even when nothing new
+        # was sent this tick, and catches bounces discovered by a later inbox check.
+        evaluate_bounce_rate()
 
     return results

@@ -40,7 +40,12 @@ _ANTHROPIC_OUTPUT_COST_PER_MTOK = 15.0
 _NVIDIA_DEFAULT_BASE_URL = "https://integrate.api.nvidia.com/v1"
 _NVIDIA_TIMEOUT_S = 120
 
+_OPENAI_COMPAT_PROVIDER_NAMES = ("nvidia", "openai-compat")
+
 _FENCE_RE = re.compile(r"^```(?:json)?\s*\n?(.*?)\n?```$", re.DOTALL)
+
+# Phase 13: log the NVIDIA_*-fallback deprecation notice once per process, not per call.
+_nvidia_fallback_logged = False
 
 
 @dataclass
@@ -64,6 +69,43 @@ def _get_provider() -> str:
     return (os.environ.get("LLM_PROVIDER") or "anthropic").strip().lower()
 
 
+def _get_openai_compat_config() -> tuple[str, str | None, str | None]:
+    """Resolve (base_url, api_key, model) for the openai-compat-style backend
+    (provider value 'nvidia' or 'openai-compat' — same backend either way).
+
+    Phase 13: `OPENAI_COMPAT_BASE_URL` / `OPENAI_COMPAT_API_KEY` / `OPENAI_COMPAT_MODEL`
+    are preferred; `NVIDIA_*` is read as a fallback for any of the three that isn't
+    set under the new names, with a one-time deprecation log (per process) the
+    first time a fallback value is actually used.
+    """
+    global _nvidia_fallback_logged
+
+    base_url = os.environ.get("OPENAI_COMPAT_BASE_URL")
+    api_key = os.environ.get("OPENAI_COMPAT_API_KEY")
+    model = os.environ.get("OPENAI_COMPAT_MODEL")
+
+    used_fallback = False
+    if not base_url and os.environ.get("NVIDIA_BASE_URL"):
+        base_url = os.environ["NVIDIA_BASE_URL"]
+        used_fallback = True
+    if not api_key and os.environ.get("NVIDIA_API_KEY"):
+        api_key = os.environ["NVIDIA_API_KEY"]
+        used_fallback = True
+    if not model and os.environ.get("NVIDIA_MODEL"):
+        model = os.environ["NVIDIA_MODEL"]
+        used_fallback = True
+
+    if used_fallback and not _nvidia_fallback_logged:
+        logger.warning(
+            "NVIDIA_* env vars are deprecated in favour of OPENAI_COMPAT_BASE_URL / "
+            "OPENAI_COMPAT_API_KEY / OPENAI_COMPAT_MODEL — please rename them in .env. "
+            "NVIDIA_* will keep working as a fallback for now."
+        )
+        _nvidia_fallback_logged = True
+
+    return base_url or _NVIDIA_DEFAULT_BASE_URL, api_key, model
+
+
 def is_configured() -> tuple[bool, str]:
     """Check (without raising) whether the *selected* provider has its required env
     vars set. Returns (True, "") if ready, else (False, human-readable reason) — used
@@ -74,12 +116,17 @@ def is_configured() -> tuple[bool, str]:
         if os.environ.get("ANTHROPIC_API_KEY"):
             return True, ""
         return False, "ANTHROPIC_API_KEY not set"
-    if provider == "nvidia":
-        missing = [n for n in ("NVIDIA_API_KEY", "NVIDIA_MODEL") if not os.environ.get(n)]
+    if provider in _OPENAI_COMPAT_PROVIDER_NAMES:
+        _, api_key, model = _get_openai_compat_config()
+        missing = []
+        if not api_key:
+            missing.append("OPENAI_COMPAT_API_KEY (or NVIDIA_API_KEY)")
+        if not model:
+            missing.append("OPENAI_COMPAT_MODEL (or NVIDIA_MODEL)")
         if not missing:
             return True, ""
         return False, f"{', '.join(missing)} not set"
-    return False, f"unknown LLM_PROVIDER {provider!r} (expected 'anthropic' or 'nvidia')"
+    return False, f"unknown LLM_PROVIDER {provider!r} (expected 'anthropic', 'nvidia', or 'openai-compat')"
 
 
 def require_configured() -> None:
@@ -93,20 +140,26 @@ def require_configured() -> None:
         if not os.environ.get("ANTHROPIC_API_KEY"):
             raise ValueError(
                 "LLM_PROVIDER is 'anthropic' (the default) but ANTHROPIC_API_KEY is not set. "
-                "Add ANTHROPIC_API_KEY to your .env, or set LLM_PROVIDER=nvidia and "
-                "NVIDIA_API_KEY/NVIDIA_MODEL to use NVIDIA instead."
+                "Add ANTHROPIC_API_KEY to your .env, or set LLM_PROVIDER=openai-compat and "
+                "OPENAI_COMPAT_API_KEY/OPENAI_COMPAT_MODEL to use an OpenAI-compatible backend instead."
             )
-    elif provider == "nvidia":
-        missing = [n for n in ("NVIDIA_API_KEY", "NVIDIA_MODEL") if not os.environ.get(n)]
+    elif provider in _OPENAI_COMPAT_PROVIDER_NAMES:
+        _, api_key, model = _get_openai_compat_config()
+        missing = []
+        if not api_key:
+            missing.append("OPENAI_COMPAT_API_KEY (or NVIDIA_API_KEY)")
+        if not model:
+            missing.append("OPENAI_COMPAT_MODEL (or NVIDIA_MODEL)")
         if missing:
             raise ValueError(
-                f"LLM_PROVIDER is 'nvidia' but missing required env var(s): {', '.join(missing)}. "
-                "Set NVIDIA_API_KEY (your build.nvidia.com API key) and NVIDIA_MODEL "
-                "(the exact model id — check https://build.nvidia.com for it, e.g. the GLM model id) "
-                "in your .env."
+                f"LLM_PROVIDER is {provider!r} but missing required env var(s): {', '.join(missing)}. "
+                "Set OPENAI_COMPAT_API_KEY and OPENAI_COMPAT_MODEL (the exact model id) in your .env "
+                "— NVIDIA_API_KEY/NVIDIA_MODEL still work as a deprecated fallback."
             )
     else:
-        raise ValueError(f"Unknown LLM_PROVIDER {provider!r} — expected 'anthropic' or 'nvidia'.")
+        raise ValueError(
+            f"Unknown LLM_PROVIDER {provider!r} — expected 'anthropic', 'nvidia', or 'openai-compat'."
+        )
 
 
 async def complete(
@@ -141,8 +194,8 @@ async def complete(
             model=model,
             max_retries=max_retries,
         )
-    if provider == "nvidia":
-        return await _complete_nvidia(
+    if provider in _OPENAI_COMPAT_PROVIDER_NAMES:
+        return await _complete_openai_compat(
             prompt,
             max_tokens=max_tokens,
             purpose=purpose,
@@ -150,7 +203,7 @@ async def complete(
             max_retries=max_retries,
         )
     raise ValueError(
-        f"Unknown LLM_PROVIDER {provider!r} — expected 'anthropic' or 'nvidia'."
+        f"Unknown LLM_PROVIDER {provider!r} — expected 'anthropic', 'nvidia', or 'openai-compat'."
     )
 
 
@@ -203,7 +256,7 @@ async def _complete_anthropic(
     raise RuntimeError(f"All {max_retries} {purpose} attempts failed (anthropic)") from last_exc
 
 
-async def _complete_nvidia(
+async def _complete_openai_compat(
     prompt: str,
     *,
     max_tokens: int,
@@ -211,10 +264,9 @@ async def _complete_nvidia(
     tool_schema: dict,
     max_retries: int,
 ) -> LLMResult:
-    base_url = (os.environ.get("NVIDIA_BASE_URL") or _NVIDIA_DEFAULT_BASE_URL).rstrip("/")
+    base_url, api_key, compat_model = _get_openai_compat_config()
+    base_url = base_url.rstrip("/")
     chat_url = f"{base_url}/chat/completions"
-    api_key = os.environ["NVIDIA_API_KEY"]
-    nvidia_model = os.environ["NVIDIA_MODEL"]
 
     schema_hint = json.dumps(tool_schema.get("input_schema", {}), indent=2)
     json_prompt = (
@@ -228,7 +280,7 @@ async def _complete_nvidia(
     # chain-of-thought in a separate `reasoning`/`reasoning_content` field on the
     # message; the JSON answer we want is in `message.content`.
     payload = {
-        "model": nvidia_model,
+        "model": compat_model,
         "messages": [{"role": "user", "content": json_prompt}],
         "max_tokens": max_tokens,
         "stream": False,
@@ -246,19 +298,19 @@ async def _complete_nvidia(
                 content = message.get("content") or ""
                 if not content.strip():
                     raise RuntimeError(
-                        f"Empty message.content in nvidia response (keys: {list(message.keys())})"
+                        f"Empty message.content in openai-compat response (keys: {list(message.keys())})"
                     )
                 text = strip_markdown_fences(content)
                 usage = data.get("usage") or {}
                 in_tok = int(usage.get("prompt_tokens", 0))
                 out_tok = int(usage.get("completion_tokens", 0))
                 logger.info(
-                    f"[{purpose}] nvidia/{nvidia_model} — {in_tok} in / {out_tok} out tokens (cost unknown)"
+                    f"[{purpose}] openai-compat/{compat_model} — {in_tok} in / {out_tok} out tokens (cost unknown)"
                 )
                 return LLMResult(text=text, input_tokens=in_tok, output_tokens=out_tok, cost_usd=None)
             except Exception as exc:
                 last_exc = exc
-                logger.warning(f"[{purpose}] nvidia attempt {attempt + 1}/{max_retries} failed: {exc}")
+                logger.warning(f"[{purpose}] openai-compat attempt {attempt + 1}/{max_retries} failed: {exc}")
                 if attempt < max_retries - 1:
                     await asyncio.sleep(2**attempt)
-    raise RuntimeError(f"All {max_retries} {purpose} attempts failed (nvidia)") from last_exc
+    raise RuntimeError(f"All {max_retries} {purpose} attempts failed (openai-compat)") from last_exc
